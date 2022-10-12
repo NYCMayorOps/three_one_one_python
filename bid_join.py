@@ -74,64 +74,51 @@ Data columns (total 32 columns):
  30  BIN                      851212 non-null  float64
  31  BBL                      731313 non-null  object
 '''
-bid_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'CBD_and_BID' / 'NYC_CBG_BID_CBD.shp')
-#print(bid_gdf.info())
-
+print('reading central business districts.')
+cbd_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles'/ 'CBD_and_BID'/ 'nyc_cbd_1.shp')
+#print(cbd_gdf.info())
 '''
  #   Column      Non-Null Count  Dtype
 ---  ------      --------------  -----
- 0   Join_Count  6789 non-null   int64
- 1   TARGET_FID  6789 non-null   int64
- 2   Join_Cou_1  6789 non-null   int64
- 3   TARGET_F_1  6789 non-null   int64
- 4   STATEFP     6789 non-null   object
- 5   COUNTYFP    6789 non-null   object
- 6   TRACTCE     6789 non-null   object
- 7   BLKGRPCE    6789 non-null   object
- 8   AFFGEOID    6789 non-null   object
- 9   GEOID       6789 non-null   object
- 10  NAME        6789 non-null   object
- 11  NAMELSAD    6789 non-null   object
- 12  LSAD        6789 non-null   object
- 13  ALAND       6789 non-null   float64
- 14  AWATER      6789 non-null   float64
- 15  bid         958 non-null    object
- 16  bidid       6789 non-null   float64
- 17  borough     958 non-null    object
- 18  date_creat  958 non-null    object
- 19  time_creat  958 non-null    object
- 20  date_modif  946 non-null    object
- 21  time_modif  946 non-null    object
- 22  Shape_Leng  6789 non-null   float64
- 23  Shape_Area  6789 non-null   float64
- 24  cartodb_id  6789 non-null   int64
- 25  sdname      174 non-null    object
- 26  sdlbl       174 non-null    object
- 27  shape_le_1  6789 non-null   float64
- 28  keep        174 non-null    object
- 29  geometry    6789 non-null   geometry
- '''
+ 0   cartodb_id  4 non-null      int64
+ 1   sdname      4 non-null      object
+ 2   sdlbl       4 non-null      object
+ 3   shape_leng  4 non-null      float64
+ 4   shape_area  4 non-null      float64
+ 5   keep        4 non-null      object
+ 6   geometry    4 non-null      geometry
+'''
+print('reading BID shapefile')
+bid_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'CBD_and_BID' /'BusinessImprovementDistrict.shp')
+#print(bid_gdf.info())
 
-bid_gdf = bid_gdf[['geometry', 'sdlbl', 'bid', 'bidid']]
+'''
+Data columns (total 8 columns):
+ #   Column      Non-Null Count  Dtype
+---  ------      --------------  -----
+ 0   BIDID       76 non-null     int64
+ 1   BID         76 non-null     object
+ 2   SHAPE_AREA  76 non-null     float64
+ 3   SHAPE_LEN   76 non-null     float64
+ 4   borough     76 non-null     object
+ 5   created     76 non-null     object
+ 6   modified    75 non-null     object
+ 7   geometry    76 non-null     geometry
+'''
+
+bid_gdf = bid_gdf[['geometry', 'BID', 'BIDID']].to_crs('EPSG:4269')
+cbd_gdf = cbd_gdf[['geometry', 'sdname', 'sdlbl']].to_crs('EPSG:4269')
 three11_90_days = three11_90_days[['LAT', 'LON', 'SR_NUMBER']]
 geometry = [Point(xy) for xy in zip(three11_90_days.LON, three11_90_days.LAT)]
 three11_90_days = three11_90_days.drop(['LON', 'LAT'], axis=1)
 three11_gdf = GeoDataFrame(three11_90_days, crs='EPSG:4269', geometry=geometry)
 answer = three11_gdf.sjoin(bid_gdf, how='left', predicate='intersects')
-answer = answer.drop(['index_right', 'geometry'], axis=1)
+answer.drop(['index_right'], axis=1, inplace=True)
+answer = answer.sjoin(cbd_gdf, how='left', predicate='intersects')
+answer.drop(['index_right', 'geometry'], axis=1, inplace=True)
+answer['BIDID'] = answer['BIDID'].astype('Int64')
+answer = answer[['SR_NUMBER', 'BIDID', 'BID','sdlbl', 'sdname']]
 print(answer.info())
-
-'''
-Data columns (total 6 columns):
- #   Column       Non-Null Count   Dtype
----  ------       --------------   -----
- 0   SR_NUMBER    844148 non-null  object
- 1   geometry     844148 non-null  geometry
- 2   index_right  822272 non-null  float64
- 3   sdlbl        33630 non-null   object
- 4   bid          141423 non-null  object
- 5   bidid        822272 non-null  float64
- '''
 
 pd_answer = pd.DataFrame(answer)
 answer = old_df.append(pd_answer, ignore_index=True)
