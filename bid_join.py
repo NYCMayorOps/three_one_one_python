@@ -25,11 +25,14 @@ if CONNECTION_STRING is None:
 
 engine = sal.create_engine(CONNECTION_STRING)
 with engine.connect() as conn:
+    print('reading from 311')
     ninety_days_ago = datetime.now() - timedelta(days=90)
     sql = f'''SELECT * FROM [311SR].[dbo].[SR] WHERE CLOSED_DATE > '{ninety_days_ago}';'''
           
     three11_90_days = pd.read_sql_query(sql, conn)
-
+    print('reading old bids and cbds')
+    sql = "SELECT * FROM [311SR].[dbo].[ThreeOneOneGeom];"
+    old_df = pd.read_sql(sql, conn)
 #print(three11_90_days.info())
 
  
@@ -129,13 +132,10 @@ Data columns (total 6 columns):
  4   bid          141423 non-null  object
  5   bidid        822272 non-null  float64
  '''
-with engine.connect() as conn:
-    
-    sql = "SELECT * FROM [311SR].[dbo].[ThreeOneOneGeom];"
-    old_df = pd.read_sql(sql, conn)
-    pd_answer = pd.DataFrame(answer)
-    answer = old_df.append(pd_answer, ignore_index=True)
-    answer.drop_duplicates(keep='last', inplace=True, ignore_index=True)
-    
-    answer.to_sql('ThreeOneOneGeom', conn, schema=None, if_exists='replace', index=False)
-    print('upload geometry complete')
+
+pd_answer = pd.DataFrame(answer)
+answer = old_df.append(pd_answer, ignore_index=True)
+answer.drop_duplicates(keep='last', inplace=True, ignore_index=True)
+print('uploading to sql')
+answer.to_sql('ThreeOneOneGeom', engine, schema=None, if_exists='replace', index=False)
+print('upload geometry complete')
