@@ -15,6 +15,8 @@ from shapely.geometry import Point
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 
+from bcpandas import SqlCreds, to_sql
+
 
 load_dotenv(f'C:\\Users\\{os.getlogin()}\\secrets\\.env')
 CONNECTION_STRING = os.getenv('CONNECTION_STRING_311')
@@ -124,5 +126,22 @@ pd_answer = pd.DataFrame(answer)
 answer = old_df.append(pd_answer, ignore_index=True)
 answer.drop_duplicates(keep='last', inplace=True, ignore_index=True)
 print('uploading to sql')
-answer.to_sql('ThreeOneOneGeom', engine, schema=None, if_exists='replace', index=False)
-print('upload geometry complete')
+THREE_ONE_ONE_OPS_SERVER=os.getenv('THREE_ONE_ONE_OPS_SERVER')
+THREE_ONE_ONE_OPS_DB=os.getenv('THREE_ONE_ONE_OPS_DB')
+THREE_ONE_ONE_OPS_USERNAME=os.getenv('THREE_ONE_ONE_OPS_USERNAME')
+THREE_ONE_ONE_OPS_PASSWORD=os.getenv('THREE_ONE_ONE_OPS_PASSWORD')
+creds = SqlCreds(server=THREE_ONE_ONE_OPS_SERVER,
+    database=THREE_ONE_ONE_OPS_DB,
+    username=THREE_ONE_ONE_OPS_USERNAME,
+    password=THREE_ONE_ONE_OPS_PASSWORD,
+)
+time0 = datetime.now()
+print(f"upload start at {str(time0)}")
+#answer.to_sql('ThreeOneOneGeom', engine, schema=None, if_exists='replace', index=False)
+#using bcpandas
+creds2 = SqlCreds.from_engine(creds.engine)
+#print(creds2.engine)
+to_sql(answer, 'ThreeOneOneGeom', creds2, index=False, if_exists='replace')
+time1 = datetime.now()
+print(f'upload geometry complete at {str(time1)}')
+print(f'time elapsed: {str(time1 - time0)}')
