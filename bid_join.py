@@ -3,18 +3,17 @@
 ######
 from operator import index
 import os
-import sqlalchemy as sal
-from sqlalchemy import create_engine
-import pandas as pd
-import geopandas as gpd
-import pygeos
-gpd.options.use_pygeos = True
-from geopandas import GeoDataFrame
 from pathlib import Path
-from shapely.geometry import Point
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-
+import sqlalchemy as sal
+from sqlalchemy import create_engine
+import numpy as np
+import pandas as pd
+from shapely.geometry import Point
+import geopandas as gpd
+gpd.options.use_pygeos = True
+from geopandas import GeoDataFrame
 from bcpandas import SqlCreds, to_sql
 
 
@@ -29,8 +28,10 @@ engine = sal.create_engine(CONNECTION_STRING)
 with engine.connect() as conn:
     print('reading from 311')
     ninety_days_ago = datetime.now() - timedelta(days=90)
+    thirty_days_ago = datetime.now() - timedelta(days=30)
     sql = f'''SELECT * FROM [311SR].[dbo].[SR] WHERE CLOSED_DATE > '{ninety_days_ago}';'''
-          
+    #sql = f'''SELECT * FROM [311SR].[dbo].[SR] WHERE CLOSED_DATE > '{thirty_days_ago}';'''
+      
     three11_90_days = pd.read_sql_query(sql, conn)
     print('reading old bids and cbds')
     sql = "SELECT * FROM [311SR].[dbo].[ThreeOneOneGeom];"
@@ -107,13 +108,46 @@ Data columns (total 8 columns):
  6   modified    75 non-null     object
  7   geometry    76 non-null     geometry
 '''
+print('reading Community District')
+cd_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'Community_Districts' / 'geo_export_ce9ce611-3d86-479d-be4a-dca285c433a2.shp')
+#print(cd_gdf.info())
+'''
+ #   Column      Non-Null Count  Dtype
+---  ------      --------------  -----
+ 0   boro_cd     71 non-null     float64
+ 1   shape_area  71 non-null     float64
+ 2   shape_leng  71 non-null     float64
+ 3   geometry    71 non-null     geometry
+'''
 
 bid_gdf = bid_gdf[['geometry', 'BID', 'BIDID']].to_crs('EPSG:4269')
 cbd_gdf = cbd_gdf[['geometry', 'sdname', 'sdlbl']].to_crs('EPSG:4269')
+cd_gdf = cd_gdf[['geometry', 'boro_cd']].to_crs('EPSG:4269')
+
 three11_90_days = three11_90_days[['LAT', 'LON', 'SR_NUMBER']]
 geometry = [Point(xy) for xy in zip(three11_90_days.LON, three11_90_days.LAT)]
 three11_90_days = three11_90_days.drop(['LON', 'LAT'], axis=1)
 three11_gdf = GeoDataFrame(three11_90_days, crs='EPSG:4269', geometry=geometry)
+
+def form_table(three11_gdf: gpd.GeoDataFrame, geometry_gdf: gpd.GeoDataFrame, geom_type: str, geoid_field_name: str, geoid_type=str) -> pd.DataFrame:
+    gdf = three11_gdf.sjoin(geometry_gdf, how='inner', predicate='intersects')
+    gdf[geoid_field_name] = gdf[geoid_field_name].astype(geoid_type)
+    df = pd.DataFrame(columns=['sr_number', 'type', 'geoid'])
+    # geoid may come in as an int or a string, but it must leave as a string.
+    convert_dict = {'sr_number': str, 'type': str, 'geoid': str}
+    df = df.astype(convert_dict)
+    df['sr_number']= gdf['SR_NUMBER']
+    df['type'] = geom_type
+    df['geoid'] = gdf[geoid_field_name].astype(geoid_type)
+    return df
+
+bid_df = form_table(three11_gdf, bid_gdf, 'BID', 'BIDID', 'Int64') #the string 'Int64' is short for pd.Int64Dtype()
+cbd_df = form_table(three11_gdf, cbd_gdf, 'CBD', 'sdlbl', str)
+cd_df = form_table(three11_gdf, cd_gdf, 'CD', 'boro_cd', 'Int64')
+#todo community board
+
+
+'''
 answer = three11_gdf.sjoin(bid_gdf, how='left', predicate='intersects')
 answer.drop(['index_right'], axis=1, inplace=True)
 answer = answer.sjoin(cbd_gdf, how='left', predicate='intersects')
@@ -121,9 +155,10 @@ answer.drop(['index_right', 'geometry'], axis=1, inplace=True)
 answer['BIDID'] = answer['BIDID'].astype('Int64')
 answer = answer[['SR_NUMBER', 'BIDID', 'BID','sdlbl', 'sdname']]
 print(answer.info())
-
-pd_answer = pd.DataFrame(answer)
-answer = old_df.append(pd_answer, ignore_index=True)
+'''
+print('concatenating')
+answer = pd.concat([bid_df, cbd_df, cd_df]).sort_values('sr_number', 0, False)
+#answer = old_df.append(pd_answer, ignore_index=True)
 answer.drop_duplicates(keep='last', inplace=True, ignore_index=True)
 print('uploading to sql')
 THREE_ONE_ONE_OPS_SERVER=os.getenv('THREE_ONE_ONE_OPS_SERVER')
