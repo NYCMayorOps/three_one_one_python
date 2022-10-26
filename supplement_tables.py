@@ -1,5 +1,5 @@
 ######
-## an app to join 311 data to CBG to BIDS
+## script to generate supplement tables. Run this when shapefile changes.
 ######
 from operator import index
 import os
