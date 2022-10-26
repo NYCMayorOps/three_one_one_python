@@ -158,7 +158,7 @@ print(answer.info())
 '''
 print('concatenating')
 answer = pd.concat([bid_df, cbd_df, cd_df]).sort_values('sr_number', 0, False)
-#answer = old_df.append(pd_answer, ignore_index=True)
+answer = old_df.append(pd_answer, ignore_index=True)
 answer.drop_duplicates(keep='last', inplace=True, ignore_index=True)
 print('uploading to sql')
 THREE_ONE_ONE_OPS_SERVER=os.getenv('THREE_ONE_ONE_OPS_SERVER')
