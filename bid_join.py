@@ -17,13 +17,15 @@ from geopandas import GeoDataFrame
 from bcpandas import SqlCreds, to_sql
 
 
+
 load_dotenv(f'C:\\Users\\{os.getlogin()}\\secrets\\.env')
 CONNECTION_STRING = os.getenv('CONNECTION_STRING_311')
 GIS_ROOT = Path(os.getenv('GIS_PATH'))
+MAYOR_DASHBOARD_ROOT = Path(os.getenv('MAYOR_DASHBOARD_ROOT'))
 #CONNECTION_STRING = os.getenv('CONNECTION_STRING_SQL_ALCHEMY')
 if CONNECTION_STRING is None:
     raise Exception('no connection string found.')
-
+print('connecting to SQL Server')
 engine = sal.create_engine(CONNECTION_STRING)
 with engine.connect() as conn:
     print('reading from 311')
@@ -31,10 +33,11 @@ with engine.connect() as conn:
     thirty_days_ago = datetime.now() - timedelta(days=30)
     sql = f'''SELECT * FROM [311SR].[dbo].[SR] WHERE CLOSED_DATE > '{ninety_days_ago}';'''
     #sql = f'''SELECT * FROM [311SR].[dbo].[SR] WHERE CLOSED_DATE > '{thirty_days_ago}';'''
-      
+    print('reading 311')
     three11_90_days = pd.read_sql_query(sql, conn)
     print('reading old bids and cbds')
     sql = "SELECT * FROM [311SR].[dbo].[ThreeOneOneGeom];"
+    print('getting old geom join')
     old_df = pd.read_sql(sql, conn)
 #print(three11_90_days.info())
 
@@ -125,10 +128,11 @@ cbd_gdf = cbd_gdf[['geometry', 'sdname', 'sdlbl']].to_crs('EPSG:4269')
 cd_gdf = cd_gdf[['geometry', 'boro_cd']].to_crs('EPSG:4269')
 
 three11_90_days = three11_90_days[['LAT', 'LON', 'SR_NUMBER']]
+print(f"len three11_90_days: {len(three11_90_days)}")
 geometry = [Point(xy) for xy in zip(three11_90_days.LON, three11_90_days.LAT)]
 three11_90_days = three11_90_days.drop(['LON', 'LAT'], axis=1)
 three11_gdf = GeoDataFrame(three11_90_days, crs='EPSG:4269', geometry=geometry)
-
+print(f"len three11_gdf: {len(three11_gdf)}")
 def form_table(three11_gdf: gpd.GeoDataFrame, geometry_gdf: gpd.GeoDataFrame, geom_type: str, geoid_field_name: str, geoid_type=str) -> pd.DataFrame:
     gdf = three11_gdf.sjoin(geometry_gdf, how='inner', predicate='intersects')
     gdf[geoid_field_name] = gdf[geoid_field_name].astype(geoid_type)
@@ -144,22 +148,29 @@ def form_table(three11_gdf: gpd.GeoDataFrame, geometry_gdf: gpd.GeoDataFrame, ge
 bid_df = form_table(three11_gdf, bid_gdf, 'BID', 'BIDID', 'Int64') #the string 'Int64' is short for pd.Int64Dtype()
 cbd_df = form_table(three11_gdf, cbd_gdf, 'CBD', 'sdlbl', str)
 cd_df = form_table(three11_gdf, cd_gdf, 'CD', 'boro_cd', 'Int64')
-#todo community board
+len_cd_df = len(cd_df)
+print(f"len cd_df: {len(cd_df)}")
 
-
-'''
-answer = three11_gdf.sjoin(bid_gdf, how='left', predicate='intersects')
-answer.drop(['index_right'], axis=1, inplace=True)
-answer = answer.sjoin(cbd_gdf, how='left', predicate='intersects')
-answer.drop(['index_right', 'geometry'], axis=1, inplace=True)
-answer['BIDID'] = answer['BIDID'].astype('Int64')
-answer = answer[['SR_NUMBER', 'BIDID', 'BID','sdlbl', 'sdname']]
-print(answer.info())
-'''
 print('concatenating')
-answer = pd.concat([bid_df, cbd_df, cd_df]).sort_values('sr_number', 0, False)
-answer = old_df.append(pd_answer, ignore_index=True)
-answer.drop_duplicates(keep='last', inplace=True, ignore_index=True)
+answer = pd.concat([bid_df, cbd_df, cd_df]).sort_values(['sr_number', 'geoid'], axis=0, ascending=True)
+answer = answer.reset_index(drop=True)
+answer = pd.concat([old_df, answer], ignore_index=True)
+
+answer.sr_number = answer.sr_number.str.strip()
+answer.type = answer.type.str.strip()
+answer.geoid = answer.geoid.str.strip()
+print(answer.info())
+print(answer.head())
+pre_drop_len = len(answer)
+print(f"pre drop len {len(answer)}")
+answer = answer.drop_duplicates(subset=['sr_number', 'type', 'geoid'],
+                                keep='last',
+                                inplace=False,
+                                ignore_index=True)
+answer = answer.dropna(axis='index', how='any')
+#print(f"stripped answer: {answer.info()}")
+print(f"len dropped: {len(answer)}")
+post_drop_len = len(answer)
 print('uploading to sql')
 THREE_ONE_ONE_OPS_SERVER=os.getenv('THREE_ONE_ONE_OPS_SERVER')
 THREE_ONE_ONE_OPS_DB=os.getenv('THREE_ONE_ONE_OPS_DB')
@@ -180,3 +191,11 @@ to_sql(answer, 'ThreeOneOneGeom', creds2, index=False, if_exists='replace')
 time1 = datetime.now()
 print(f'upload geometry complete at {str(time1)}')
 print(f'time elapsed: {str(time1 - time0)}')
+print(f"pre drop len {pre_drop_len}")
+print(f"post_drop_len {post_drop_len}")
+#you need to pull the table from SQL into a shapefile
+
+with engine.connect() as conn:
+    sql = "SELECT * FROM [311SR].[dbo].[agg_1d_ago]"
+    three11_grouped = pd.read_sql(sql, conn)
+    three11_grouped.to_csv(MAYOR_DASHBOARD_ROOT / 'output' / 'three_one_one' / 'grouped_311_by_community_board_yesterday.csv', index=False)
