@@ -42,7 +42,7 @@ cbd_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles'/ 'CBD_and_BID
 '''
 
 cbd_df = pd.DataFrame({'geoid': cbd_gdf['sdlbl'], 'name': cbd_gdf['sdname']})
-
+cbd_df['geoid'] = cbd_df.geoid.str.strip()
 
 print('reading BID shapefile')
 bid_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'CBD_and_BID' /'BusinessImprovementDistrict.shp')
@@ -68,7 +68,7 @@ bid_df = pd.DataFrame({'geoid': bid_gdf['BIDID'],
     'created': bid_gdf['created'], 
     'modified': bid_gdf['modified']
     })
-
+bid_df['geoid'] = bid_df.astype(str).geoid.str.strip()
 #print(bid_df.head())
 
 print('reading Community District')
@@ -84,10 +84,18 @@ cd_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'Community_D
  3   geometry    71 non-null     geometry
 '''
 cd_df : pd.DataFrame = pd.DataFrame({'geoid': cd_gdf['boro_cd']})
+cd_df['geoid'] = cd_df['geoid'].astype(int).astype(str)
+cd_df['geoid'] = cd_df.geoid.str.strip()
 THREE_ONE_ONE_OPS_SERVER=os.getenv('THREE_ONE_ONE_OPS_SERVER')
 THREE_ONE_ONE_OPS_DB=os.getenv('THREE_ONE_ONE_OPS_DB')
 THREE_ONE_ONE_OPS_USERNAME=os.getenv('THREE_ONE_ONE_OPS_USERNAME')
 THREE_ONE_ONE_OPS_PASSWORD=os.getenv('THREE_ONE_ONE_OPS_PASSWORD')
+
+assert THREE_ONE_ONE_OPS_SERVER is not None
+assert THREE_ONE_ONE_OPS_DB is not None
+assert THREE_ONE_ONE_OPS_USERNAME is not None
+assert THREE_ONE_ONE_OPS_PASSWORD is not None
+
 creds = SqlCreds(server=THREE_ONE_ONE_OPS_SERVER,
     database=THREE_ONE_ONE_OPS_DB,
     username=THREE_ONE_ONE_OPS_USERNAME,
