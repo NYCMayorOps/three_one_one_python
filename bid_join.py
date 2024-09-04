@@ -3,6 +3,8 @@
 ######
 from operator import index
 import os
+os.environ['USE_PYGEOS'] = '0'
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -12,8 +14,9 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import Point
 import geopandas as gpd
-gpd.options.use_pygeos = True
 from geopandas import GeoDataFrame
+#bc pandas is a high level wrapper around BCP 
+#for high perfomrmance data transfers between pandas and SQL Server
 from bcpandas import SqlCreds, to_sql
 
 
@@ -25,19 +28,24 @@ MAYOR_DASHBOARD_ROOT = Path(os.getenv('MAYOR_DASHBOARD_ROOT'))
 #CONNECTION_STRING = os.getenv('CONNECTION_STRING_SQL_ALCHEMY')
 if CONNECTION_STRING is None:
     raise Exception('no connection string found.')
+print(f"using connection string {CONNECTION_STRING}")
 print('connecting to SQL Server')
 engine = sal.create_engine(CONNECTION_STRING)
 with engine.connect() as conn:
     print('reading from 311')
     ninety_days_ago = datetime.now() - timedelta(days=90)
     thirty_days_ago = datetime.now() - timedelta(days=30)
-    sql = f'''SELECT * FROM [311SR].[dbo].[SR] WHERE CLOSED_DATE > '{ninety_days_ago}';'''
+    
     #sql = f'''SELECT * FROM [311SR].[dbo].[SR] WHERE CLOSED_DATE > '{thirty_days_ago}';'''
+    sql = f'''SELECT * FROM [311SR].[dbo].[SR] WHERE CLOSED_DATE > '{ninety_days_ago}';'''
+    #uncomment the below line for backfilling
+    #sql = f'''SELECT * FROM [311SR].[dbo].[SR];'''
     print('reading 311')
     three11_90_days = pd.read_sql_query(sql, conn)
     print('reading old bids and cbds')
     sql = "SELECT * FROM [311SR].[dbo].[ThreeOneOneGeom];"
     print('getting old geom join')
+    #old df is all records in ThreeOneOneGeom
     old_df = pd.read_sql(sql, conn)
 #print(three11_90_days.info())
 
@@ -97,7 +105,8 @@ cbd_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles'/ 'CBD_and_BID
 print('reading BID shapefile')
 bid_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'CBD_and_BID' /'BusinessImprovementDistrict.shp')
 #print(bid_gdf.info())
-
+logging.info(bid_gdf.info())
+logging.info(bid_gdf['geometry'])
 '''
 Data columns (total 8 columns):
  #   Column      Non-Null Count  Dtype
@@ -123,9 +132,20 @@ cd_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'Community_D
  3   geometry    71 non-null     geometry
 '''
 
+pd_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'NYPD' / 'nypd.shp')
+'''
+ #   Column      Non-Null Count  Dtype
+---  ------      --------------  -----
+ 0   precinct    77 non-null     float64
+ 1   shape_area  77 non-null     float64
+ 2   shape_leng  77 non-null     float64
+ 3   geometry    77 non-null     geometry
+'''
+ 
 bid_gdf = bid_gdf[['geometry', 'BID', 'BIDID']].to_crs('EPSG:4269')
 cbd_gdf = cbd_gdf[['geometry', 'sdname', 'sdlbl']].to_crs('EPSG:4269')
 cd_gdf = cd_gdf[['geometry', 'boro_cd']].to_crs('EPSG:4269')
+pd_gdf = pd_gdf[['geometry', 'precinct']].to_crs('EPSG:4269') 
 
 three11_90_days = three11_90_days[['LAT', 'LON', 'SR_NUMBER']]
 print(f"len three11_90_days: {len(three11_90_days)}")
@@ -133,6 +153,7 @@ geometry = [Point(xy) for xy in zip(three11_90_days.LON, three11_90_days.LAT)]
 three11_90_days = three11_90_days.drop(['LON', 'LAT'], axis=1)
 three11_gdf = GeoDataFrame(three11_90_days, crs='EPSG:4269', geometry=geometry)
 print(f"len three11_gdf: {len(three11_gdf)}")
+
 def form_table(three11_gdf: gpd.GeoDataFrame, geometry_gdf: gpd.GeoDataFrame, geom_type: str, geoid_field_name: str, geoid_type=str) -> pd.DataFrame:
     gdf = three11_gdf.sjoin(geometry_gdf, how='inner', predicate='intersects')
     gdf[geoid_field_name] = gdf[geoid_field_name].astype(geoid_type)
@@ -145,15 +166,19 @@ def form_table(three11_gdf: gpd.GeoDataFrame, geometry_gdf: gpd.GeoDataFrame, ge
     df['geoid'] = gdf[geoid_field_name].astype(geoid_type)
     return df
 
-bid_df = form_table(three11_gdf, bid_gdf, 'BID', 'BIDID', 'Int64') #the string 'Int64' is short for pd.Int64Dtype()
-cbd_df = form_table(three11_gdf, cbd_gdf, 'CBD', 'sdlbl', str)
-cd_df = form_table(three11_gdf, cd_gdf, 'CD', 'boro_cd', 'Int64')
+#forms table. three11_gdf is past 90 days.
+bid_df : pd.DataFrame = form_table(three11_gdf, bid_gdf, 'BID', 'BIDID', 'Int64') #the string 'Int64' is short for pd.Int64Dtype()
+cbd_df : pd.DataFrame = form_table(three11_gdf, cbd_gdf, 'CBD', 'sdlbl', str)
+cd_df : pd.DataFrame = form_table(three11_gdf, cd_gdf, 'CD', 'boro_cd', 'Int64')
+pd_df : pd.DataFrame = form_table(three11_gdf, pd_gdf, 'PD', 'precinct', 'Int64')
 len_cd_df = len(cd_df)
 print(f"len cd_df: {len(cd_df)}")
 
 print('concatenating')
 answer = pd.concat([bid_df, cbd_df, cd_df]).sort_values(['sr_number', 'geoid'], axis=0, ascending=True)
 answer = answer.reset_index(drop=True)
+
+#concat the last 90 days to the historic record. Duplicates to be dropped.
 answer = pd.concat([old_df, answer], ignore_index=True)
 
 answer.sr_number = answer.sr_number.str.strip()
@@ -163,6 +188,8 @@ print(answer.info())
 print(answer.head())
 pre_drop_len = len(answer)
 print(f"pre drop len {len(answer)}")
+
+#drops duplicates on the concatenated table
 answer = answer.drop_duplicates(subset=['sr_number', 'type', 'geoid'],
                                 keep='last',
                                 inplace=False,

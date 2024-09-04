@@ -3,6 +3,7 @@
 ######
 from operator import index
 import os
+os.environ['USE_PYGEOS'] = '0'
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -86,6 +87,21 @@ cd_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'Community_D
 cd_df : pd.DataFrame = pd.DataFrame({'geoid': cd_gdf['boro_cd']})
 cd_df['geoid'] = cd_df['geoid'].astype(int).astype(str)
 cd_df['geoid'] = cd_df.geoid.str.strip()
+
+print('reading NYPD precincts')
+pd_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'NYPD' / 'nypd.shp')
+'''
+ #   Column      Non-Null Count  Dtype
+ # ---  ------      --------------  -----
+ # 0   precinct    77 non-null     float64
+ # 1   shape_area  77 non-null     float64
+ # 2   shape_leng  77 non-null     float64
+ # 3   geometry    77 non-null     geometry
+ #'''
+pd_df = pd.DataFrame({'geoid': pd_gdf['precinct']})
+pd_df['geoid'] = pd_df['geoid'].astype(int).astype(str)
+pd_df['geoid'] = pd_df.geoid.str.strip()
+
 THREE_ONE_ONE_OPS_SERVER=os.getenv('THREE_ONE_ONE_OPS_SERVER')
 THREE_ONE_ONE_OPS_DB=os.getenv('THREE_ONE_ONE_OPS_DB')
 THREE_ONE_ONE_OPS_USERNAME=os.getenv('THREE_ONE_ONE_OPS_USERNAME')
@@ -110,3 +126,4 @@ creds2 = SqlCreds.from_engine(creds.engine)
 to_sql(bid_df.astype(str), 'business_improvement_district', creds2, index=False, if_exists='replace')
 to_sql(cbd_df.astype(str), 'central_business_district', creds2, index=False, if_exists='replace')
 to_sql(cd_df.astype(str), 'community_district', creds2, index=False, if_exists='replace')
+to_sql(pd_df.astype(str), 'nypd_precinct', creds2, index=False, if_exists='replace')
