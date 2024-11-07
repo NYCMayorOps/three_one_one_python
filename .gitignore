@@ -1,0 +1,5 @@
+.pyc
+.sqlite
+pyc
+__pycache__
+.lock
