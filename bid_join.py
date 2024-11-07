@@ -20,10 +20,12 @@ from geopandas import GeoDataFrame
 #for high perfomrmance data transfers between pandas and SQL Server
 from bcpandas import SqlCreds, to_sql
 from dateutil import relativedelta
+from sqlalchemy import text
 
 
 def main(engine: sal.engine, year: int = None, month: int = None ):
     GIS_ROOT = Path(os.getenv('GIS_PATH'))
+    MAYOR_DASHBOARD_ROOT = Path(os.getenv('MAYOR_DASHBOARD_ROOT'))
     with engine.connect() as conn:
         ninety_days_ago = datetime.now() - timedelta(days=90)
         thirty_days_ago = datetime.now() - timedelta(days=30)
@@ -136,7 +138,7 @@ def main(engine: sal.engine, year: int = None, month: int = None ):
          2   shape_leng  71 non-null     float64
          3   geometry    71 non-null     geometry
         '''
-    
+        #print('reading police precincts')
         pd_gdf : gpd.GeoDataFrame = gpd.read_file(GIS_ROOT / 'shapefiles' / 'NYPD' / 'nypd.shp')
         '''
          #   Column      Non-Null Count  Dtype
@@ -146,11 +148,13 @@ def main(engine: sal.engine, year: int = None, month: int = None ):
          2   shape_leng  77 non-null     float64
          3   geometry    77 non-null     geometry
         '''
+        ebc_gdf = gpd.read_file(GIS_ROOT / 'ThreeOneOne' / 'EveryBlockCounts_r1.zip')
         
         bid_gdf = bid_gdf[['geometry', 'BID', 'BIDID']].to_crs('EPSG:4269')
         cbd_gdf = cbd_gdf[['geometry', 'sdname', 'sdlbl']].to_crs('EPSG:4269')
         cd_gdf = cd_gdf[['geometry', 'boro_cd']].to_crs('EPSG:4269')
-        pd_gdf = pd_gdf[['geometry', 'precinct']].to_crs('EPSG:4269') 
+        pd_gdf = pd_gdf[['geometry', 'precinct']].to_crs('EPSG:4269')
+        ebc_gdf = ebc_gdf[['geometry', 'objectid']].to_crs('EPSG:4269') 
     
         three11_results = three11_results[['LAT', 'LON', 'SR_NUMBER']]
         print(f"len three11_results: {len(three11_results)}")
@@ -177,11 +181,10 @@ def main(engine: sal.engine, year: int = None, month: int = None ):
         cbd_df : pd.DataFrame = form_table(three11_gdf, cbd_gdf, 'CBD', 'sdlbl', str)
         cd_df : pd.DataFrame = form_table(three11_gdf, cd_gdf, 'CD', 'boro_cd', 'Int64')
         pd_df : pd.DataFrame = form_table(three11_gdf, pd_gdf, 'PD', 'precinct', 'Int64')
-        len_cd_df = len(cd_df)
-        #print(f"len cd_df: {len(cd_df)}")
+        ebc_df : pd.DataFrame = form_table(three11_gdf, ebc_gdf, 'EBC', 'objectid', 'Int64')
         
         print('concatenating')
-        answer = pd.concat([bid_df, cbd_df, cd_df, pd_df]).sort_values(['sr_number', 'geoid'], axis=0, ascending=True)
+        answer = pd.concat([bid_df, cbd_df, cd_df, pd_df, ebc_df]).sort_values(['sr_number', 'geoid'], axis=0, ascending=True)
         answer = answer.reset_index(drop=True)
 
         #upload to a staging table.
@@ -199,21 +202,21 @@ def main(engine: sal.engine, year: int = None, month: int = None ):
 
         #upload to staging table
         staging_table_name = 'ThreeOneOneGeomStaging'
-        answer.to_sql(staging_table_name, engine, schema=None, if_exists='replace', index=False)
+        answer.to_sql(staging_table_name, engine, schema=None, if_exists='replace', index=False, chunksize=100_000)
 
         # Define the upsert SQL query using MERGE
-        upsert_query = f"""
-            MERGE INTO {target_table.name} AS target
-            USING {staging_table_name} AS source
-            ON target.sr_number = source.sr_number AND target.geoid = source.geoid and target.type = source.type
-            WHEN NOT MATCHED THEN
-                INSERT (sr_number, type, geoid)
-                VALUES (source.sr_number, source.type, source.geoid);
-            """     
+        upsert_query = text("EXEC dbo.push_staging_to_311_geom")
 
         # Execute the upsert query
+        print('merging')
         with engine.connect() as conn:
-            conn.execute(upsert_query)      
+            transaction = conn.begin()
+            try:
+                conn.execute(upsert_query)      
+                transaction.commit()
+            except Exception as e:
+                transaction.rollback()
+                print(e)
 
         # Commit the session
         session.commit()        
@@ -232,6 +235,9 @@ def main(engine: sal.engine, year: int = None, month: int = None ):
                 sql = "SELECT * FROM [311SR].[dbo].[agg_1d_ago]"
                 three11_grouped = pd.read_sql(sql, conn)
                 three11_grouped.to_csv(MAYOR_DASHBOARD_ROOT / 'output' / 'three_one_one' / 'grouped_311_by_community_board_yesterday.csv', index=False)
+
+        ebc_df.to_csv(MAYOR_DASHBOARD_ROOT / 'output' / 'three_one_one' / f'ebc-{year}-{month}.csv', index=False)
+
 
 if __name__ == '__main__':
     os.environ['USE_PYGEOS'] = '0'
