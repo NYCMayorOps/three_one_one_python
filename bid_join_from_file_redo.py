@@ -154,7 +154,7 @@ if __name__ == '__main__':
     os.environ['USE_PYGEOS'] = '0'
     load_dotenv(f'C:\\Users\\{os.getlogin()}\\secrets\\.env')
     GIS_ROOT = Path(os.getenv('GIS_PATH'))
-    path_to_file = GIS_ROOT / 'ThreeOneOne' / 'missing_geocode_attempt_4.csv'
+    path_to_file = GIS_ROOT / 'ThreeOneOne' / 'missing_geocode_attempt_6.csv'
     print(f"using path {path_to_file}")
     main(path_to_file)
     print('The records in the file have been geocoded successfully and uploaded to MSSQL')
